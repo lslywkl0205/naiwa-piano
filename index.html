@@ -409,14 +409,36 @@
   }
   function primeSfx(key, url) {
     if (!url) return;
+    if (String(url).indexOf('data:') === 0) {
+      try {
+        ctx().decodeAudioData(b64ToAB(url), function (b) { SFXBUF[key] = b; }, function () {});
+      } catch (e) {}
+      return;
+    }
     try {
-      ctx().decodeAudioData(b64ToAB(url), function (b) { SFXBUF[key] = b; }, function () {});
+      fetch(url).then(function (r) { return r.arrayBuffer(); }).then(function (ab) {
+        try { ctx().decodeAudioData(ab, function (b) { SFXBUF[key] = b; }, function () {}); } catch (e) {}
+      }).catch(function () {});
     } catch (e) {}
   }
   var activeSfx = {};
+  var SFX_EL = null;
+  function playEl(key, vol, dur) {
+    try {
+      if (!SFX_EL) SFX_EL = { long: sfxLong, fail: sfxFail, pause: sfxPause, over: sfxOver, laugh: laugh };
+      var el = SFX_EL[key];
+      if (!el) return false;
+      el.volume = Math.min(1, Math.max(0, vol == null ? 0.9 : vol));
+      try { el.currentTime = 0; } catch (e) {}
+      var p = el.play();
+      if (p && p.catch) p.catch(function () {});
+      if (dur) setTimeout(function () { try { el.pause(); } catch (e) {} }, dur * 1000);
+      return true;
+    } catch (e) { return false; }
+  }
   function playBuf(key, vol, dur) {
     var b = SFXBUF[key];
-    if (!b) return false;
+    if (!b) return playEl(key, vol, dur);
     try {
       var a = ctx();
       if (a.state === 'suspended') a.resume();
