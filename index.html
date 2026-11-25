@@ -378,7 +378,7 @@
     immuneUntil: 0,
     item: null, waitStart: false, paused: false, speedMul: 1,
     slowUntil: 0, slowActive: false, slowUsed: false,
-    sprintUntil: 0, sprintRecover: 0, wasSprint: false,
+    sprintUntil: 0, sprintRecover: 0, wasSprint: false, recoverHits: 0,
     doubleUntil: 0, startEl: null
   };
   var boardH = 0, colW = 0, blockH = 0;
@@ -742,7 +742,7 @@
       state.blocks.push({
         el: elL, y: y0, col: col, id: state.id,
         long: true, segs: score, segH: blockH, h: h, hit: {}, holding: false,
-        next: score - 1, tick: 0
+        next: score - 1, tick: 0, points: score
       });
     } else {
       var el = document.createElement('div');
@@ -754,7 +754,12 @@
       el.style.backgroundImage = (state.item === 'double') ? LONG_FOOT_URL : NAIWA_URL;
       el.dataset.id = String(++state.id);
       board.appendChild(el);
-      state.blocks.push({ el: el, y: y0, col: col, id: state.id, long: false, h: blockH });
+      state.blocks.push({ el: el, y: y0, col: col, id: state.id, long: false, h: blockH, points: 1 });
+    }
+    // 冲刺期间生成的键直接隐藏（灭霸图片下方四列不放键）
+    if (performance.now() < state.sprintUntil) {
+      var nb = state.blocks[state.blocks.length - 1];
+      if (nb) nb.el.style.display = 'none';
     }
   }
 
@@ -774,6 +779,10 @@
     state.score += gain;
     state.combo += 1;
     if (!opts.silent) playLaugh();
+    // 冲刺结束后的恢复期：玩家每亲手点中一个键，提速进度 +1
+    if (!opts.keep && state.sprintRecover > 0 && performance.now() >= state.sprintUntil) {
+      state.recoverHits = (state.recoverHits || 0) + 1;
+    }
     updateHud();
   }
 
@@ -924,18 +933,21 @@
       state.slowActive = false;
       playBuf('slowPick', 0.65);
     }
-    // 道具倍率（降速 0.55、冲刺 2），每帧向目标平滑靠拢
+    // 道具倍率：降速 0.55；冲刺 2 倍，最后 2 秒渐降到 0.5 倍提醒"该自己弹了"；结束后前 3 键 0.5 倍、15 键内升回
     var inSprint = now < state.sprintUntil;
     var targetMul = 1;
     if (state.slowActive) targetMul *= 0.55;
     if (inSprint) {
-      targetMul *= 2;
+      var sprintLeft = state.sprintUntil - now;
+      targetMul *= sprintLeft < 2000 ? (0.5 + 1.5 * (sprintLeft / 2000)) : 2;
       state.sprintRecover = 0;
+      state.recoverHits = 0;
     } else if (state.sprintRecover > 0) {
-      if (now < state.sprintRecover) targetMul = 1;   // 冲刺结束后先回到 1 倍
-      else state.sprintRecover = 0;
+      var rp = Math.min(1, Math.max(0, ((state.recoverHits || 0) - 3) / 15));
+      targetMul = 0.5 + 0.5 * rp;
+      if (rp >= 1) state.sprintRecover = 0;
     }
-    if (state.wasSprint && !inSprint) state.sprintRecover = now + 900; // 之后 900ms 保持 1 倍再过渡
+    if (state.wasSprint && !inSprint) { state.sprintRecover = 1; state.recoverHits = 0; }
     state.wasSprint = inSprint;
     state.speedMul += (targetMul - state.speedMul) * Math.min(1, dt * 3.2);
 
@@ -985,6 +997,17 @@
       b.y += speed * dt;
       b.el.style.transform = 'translate3d(0,' + b.y + 'px,0)';
       if (b.el.classList.contains('sprintfx') !== sprintOn) b.el.classList.toggle('sprintfx', sprintOn);
+      // 冲刺期间：四列所有键隐藏；无论按没按到，越过判定线自动加该块的分
+      if (sprintOn) {
+        if (b.el.style.display !== 'none') b.el.style.display = 'none';
+        if (!b.autoScored && b.y + (b.long ? b.h : blockH) >= judgeY) {
+          b.autoScored = true;
+          scoreBlock(b, b.points || 1, { silent: true });
+          continue;
+        }
+      } else if (b.el.style.display === 'none') {
+        b.el.style.display = '';
+      }
       var ice = now < state.immuneUntil;
       if (b.el.classList.contains('ice') !== ice) b.el.classList.toggle('ice', ice);
 
